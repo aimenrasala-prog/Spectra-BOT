@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, EmbedBuilder } = require('discord.js');
 const path = require('path');
 const fs = require('fs');
 const { gestionarIA } = require('./utils/aiHandler');
@@ -9,7 +9,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers // IMPORTANTE: Activa esto en Discord Developer Portal
     ]
 });
 
@@ -17,7 +17,7 @@ client.commands = new Collection();
 let contadorMensajes = 0;
 const INSULTOS = ['pendejo', 'estupido', 'idiota']; 
 
-// 2. Cargar Comandos Slash
+// 1. CARGA DE COMANDOS
 const commandsJSON = [];
 const commandsPath = path.join(__dirname, 'commands');
 
@@ -41,62 +41,80 @@ if (fs.existsSync(commandsPath)) {
     }
 }
 
-// 3. Evento: Bot Listo
+// 2. EVENTO: BOT LISTO
 client.once('ready', async () => {
-    console.log(`✅ ¡Bot online como ${client.user.tag}!`);
+    console.log(`✅ ¡Manager Online! Conectado como ${client.user.tag}`);
     try {
         await client.application.commands.set(commandsJSON);
-        console.log("🚀 Comandos Slash registrados.");
+        console.log("🚀 Comandos Slash actualizados.");
     } catch (error) {
         console.error("Error registrando comandos:", error);
     }
 });
 
-// 4. Bienvenidas
+// 3. EVENTO: BIENVENIDA (MANAGER STYLE)
 client.on('guildMemberAdd', async (member) => {
-    const canalGeneral = member.guild.channels.cache.get(process.env.ID_CANAL_GENERAL);
-    if (!canalGeneral) return;
-    const msg = await canalGeneral.send(`👋 ¡Bienvenido ${member}! Disfruta del servidor.`);
-    setTimeout(() => msg.delete().catch(() => {}), 15000);
+    // Busca el canal por ID de Railway o por nombre "bienvenida"
+    const canalBienvenida = member.guild.channels.cache.get(process.env.ID_CANAL_GENERAL) || 
+                            member.guild.channels.cache.find(c => c.name.includes('bienvenida'));
+
+    if (!canalBienvenida) return;
+
+    const embedBienvenida = new EmbedBuilder()
+        .setTitle(`✨ ¡Bienvenido a ${member.guild.name}!`)
+        .setDescription(`Hola ${member}, soy el **Manager** oficial.\n\n📍 Disfruta del servidor y respeta las reglas.\n\n*Eres el miembro nº ${member.guild.memberCount}*`)
+        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+        .setColor('#00ffcc')
+        .setTimestamp();
+
+    const msg = await canalBienvenida.send({ content: `¡Bienvenido ${member}!`, embeds: [embedBienvenida] });
+    
+    // Auto-borrado para no saturar el canal
+    setTimeout(() => msg.delete().catch(() => {}), 20000);
 });
 
-// 5. Mensajes (IA, Moderación y Admins)
+// 4. EVENTO: MENSAJES (MODERACIÓN, RECORDATORIOS E IA)
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // --- PROTECCIÓN PARA ADMINS ---
+    // --- PROTECCIÓN PARA STAFF (ADMINS INMUNES) ---
     const esStaff = message.member.permissions.has('Administrator') || 
                     message.member.permissions.has('ManageMessages');
 
     if (!esStaff) {
-        // MODERACIÓN (Solo usuarios normales)
+        // Moderación de Mayúsculas e Insultos (Solo usuarios normales)
         const textoNorm = message.content.toLowerCase();
         const palabras = message.content.split(' ').filter(p => p.length > 2);
         const mayusculas = palabras.filter(p => p === p.toUpperCase());
 
-        if (mayusculas.length > 3 || INSULTOS.some(insulto => textoNorm.includes(insulto))) {
+        if (mayusculas.length > 4 || INSULTOS.some(insulto => textoNorm.includes(insulto))) {
             if (message.deletable) await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, modera tu lenguaje/mayúsculas.`)
-                .then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
+            const aviso = await message.channel.send(`⚠️ ${message.author}, modera tu lenguaje/mayúsculas.`);
+            return setTimeout(() => aviso.delete().catch(() => {}), 5000);
         }
     }
 
-    // RECORDATORIO TRADE
+    // --- RECORDATORIO DE TRADE (MANAGER) ---
     if (message.channel.id === process.env.ID_CANAL_GENERAL) {
         contadorMensajes++;
-        if (contadorMensajes >= 7) {
+        if (contadorMensajes >= 15) {
             contadorMensajes = 0;
-            await message.channel.send("📢 **SI QUIERES TRADEAR CON EL STAFF ABRE TICKET EN #MIDLEMAN Y ELIGE LA OPCIÓN DE TRADE ELGRINGO**");
+            const embedTrade = new EmbedBuilder()
+                .setTitle('📢 RECORDATORIO DE TRADES')
+                .setDescription("Si quieres realizar un **Trade con el Staff**, abre un ticket en el canal correspondiente y elige la opción **Trade Elgringo**.")
+                .setColor('#f1c40f')
+                .setFooter({ text: 'Sistema de Seguridad Manager' });
+            
+            await message.channel.send({ embeds: [embedTrade] });
         }
     }
 
-    // RESPUESTA DE LA IA
+    // --- RESPUESTA DE LA IA (GROQ) ---
     const esPrivado = message.author.id === process.env.ID_TU_USUARIO_ID && message.channel.id === process.env.ID_CANAL_IA_PRIVADO;
-    const esTicketSoporte = message.channel.parentId === process.env.ID_CAT_SOPORTE;
-    const esTicketTrade = message.channel.parentId === process.env.ID_CAT_TRADE;
+    const esTicket = message.channel.parentId === process.env.ID_CAT_SOPORTE || message.channel.parentId === process.env.ID_CAT_TRADE;
     const meMencionan = message.mentions.has(client.user);
 
-    if (esPrivado || esTicketSoporte || esTicketTrade || meMencionan) {
+    if (esPrivado || esTicket || meMencionan) {
         await message.channel.sendTyping();
         try {
             const contenidoLimpio = message.content.replace(/<@!?\d+>/g, "").trim();
@@ -104,12 +122,12 @@ client.on('messageCreate', async (message) => {
             await message.reply(respuesta);
         } catch (err) {
             console.error("Error en IA:", err);
-            await message.reply("❌ Hubo un error al procesar tu pregunta.");
+            await message.reply("❌ Mi cerebro de Manager tuvo un error. Inténtalo de nuevo.");
         }
     }
 });
 
-// 6. Interacciones
+// 5. INTERACCIONES (COMANDOS Y BOTONES)
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
         if (interaction.customId === 'claim_drop') {
@@ -131,13 +149,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// --- LOGIN SEGURO ---
+// LOGIN SEGURO CON MULTI-NOMBRE DE VARIABLE
 const token = process.env.DISCORD_TOKEN || process.env.TOKEN || process.env.BOT_TOKEN;
-
 if (!token) {
-    console.error("❌ ERROR: No se encontró ningún Token en las variables de Railway.");
+    console.error("❌ ERROR: No hay token configurado en Railway.");
 } else {
-    client.login(token).catch(err => {
-        console.error("❌ ERROR AL INICIAR SESIÓN:", err.message);
-    });
+    client.login(token).catch(err => console.error("❌ Error de Login:", err.message));
 }
