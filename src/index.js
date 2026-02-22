@@ -9,7 +9,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers // IMPORTANTE: Activa esto en Discord Developer Portal
+        GatewayIntentBits.GuildMembers 
     ]
 });
 
@@ -52,9 +52,8 @@ client.once('ready', async () => {
     }
 });
 
-// 3. EVENTO: BIENVENIDA (MANAGER STYLE)
+// 3. EVENTO: BIENVENIDA
 client.on('guildMemberAdd', async (member) => {
-    // Busca el canal por ID de Railway o por nombre "bienvenida"
     const canalBienvenida = member.guild.channels.cache.get(process.env.ID_CANAL_GENERAL) || 
                             member.guild.channels.cache.find(c => c.name.includes('bienvenida'));
 
@@ -64,12 +63,9 @@ client.on('guildMemberAdd', async (member) => {
         .setTitle(`✨ ¡Bienvenido a ${member.guild.name}!`)
         .setDescription(`Hola ${member}, soy el **Manager** oficial.\n\n📍 Disfruta del servidor y respeta las reglas.\n\n*Eres el miembro nº ${member.guild.memberCount}*`)
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-        .setColor('#00ffcc')
-        .setTimestamp();
+        .setColor('#00ffcc');
 
     const msg = await canalBienvenida.send({ content: `¡Bienvenido ${member}!`, embeds: [embedBienvenida] });
-    
-    // Auto-borrado para no saturar el canal
     setTimeout(() => msg.delete().catch(() => {}), 20000);
 });
 
@@ -77,12 +73,10 @@ client.on('guildMemberAdd', async (member) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // --- PROTECCIÓN PARA STAFF (ADMINS INMUNES) ---
     const esStaff = message.member.permissions.has('Administrator') || 
                     message.member.permissions.has('ManageMessages');
 
     if (!esStaff) {
-        // Moderación de Mayúsculas e Insultos (Solo usuarios normales)
         const textoNorm = message.content.toLowerCase();
         const palabras = message.content.split(' ').filter(p => p.length > 2);
         const mayusculas = palabras.filter(p => p === p.toUpperCase());
@@ -94,7 +88,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- RECORDATORIO DE TRADE (MANAGER) ---
     if (message.channel.id === process.env.ID_CANAL_GENERAL) {
         contadorMensajes++;
         if (contadorMensajes >= 15) {
@@ -102,14 +95,11 @@ client.on('messageCreate', async (message) => {
             const embedTrade = new EmbedBuilder()
                 .setTitle('📢 RECORDATORIO DE TRADES')
                 .setDescription("Si quieres realizar un **Trade con el Staff**, abre un ticket en el canal correspondiente y elige la opción **Trade Elgringo**.")
-                .setColor('#f1c40f')
-                .setFooter({ text: 'Sistema de Seguridad Manager' });
-            
+                .setColor('#f1c40f');
             await message.channel.send({ embeds: [embedTrade] });
         }
     }
 
-    // --- RESPUESTA DE LA IA (GROQ) ---
     const esPrivado = message.author.id === process.env.ID_TU_USUARIO_ID && message.channel.id === process.env.ID_CANAL_IA_PRIVADO;
     const esTicket = message.channel.parentId === process.env.ID_CAT_SOPORTE || message.channel.parentId === process.env.ID_CAT_TRADE;
     const meMencionan = message.mentions.has(client.user);
@@ -122,25 +112,44 @@ client.on('messageCreate', async (message) => {
             await message.reply(respuesta);
         } catch (err) {
             console.error("Error en IA:", err);
-            await message.reply("❌ Mi cerebro de Manager tuvo un error. Inténtalo de nuevo.");
         }
     }
 });
 
-// 5. INTERACCIONES (COMANDOS Y BOTONES)
+// 5. INTERACCIONES (BOTONES Y COMANDOS)
 client.on('interactionCreate', async (interaction) => {
+    
+    // --- LÓGICA DE BOTONES ---
     if (interaction.isButton()) {
+        // Botón de Drops
         if (interaction.customId === 'claim_drop') {
-            await interaction.update({ content: `✅ Drop ganado por: ${interaction.user}`, embeds: [], components: [] });
+            await interaction.update({ content: `✅ Drop reclamado por: ${interaction.user}`, embeds: [], components: [] });
             const logs = interaction.guild.channels.cache.get(process.env.ID_CANAL_LOGS);
             if (logs) logs.send(`🎁 **Drop reclamado:** ${interaction.user.tag}`);
+        }
+
+        // Botón de Sorteo
+        if (interaction.customId === 'participar_sorteo') {
+            const sorteoCmd = client.commands.get('sorteo');
+            
+            // Usamos una propiedad del comando para guardar participantes de forma sencilla
+            if (!sorteoCmd.lista) sorteoCmd.lista = [];
+
+            if (sorteoCmd.lista.includes(interaction.user.id)) {
+                return interaction.reply({ content: '❌ Ya estás en la lista.', ephemeral: true });
+            }
+
+            sorteoCmd.lista.push(interaction.user.id);
+            return interaction.reply({ content: `✅ ¡Registrado! Hay ${sorteoCmd.lista.length} participantes.`, ephemeral: true });
         }
         return;
     }
 
+    // --- LÓGICA DE COMANDOS SLASH ---
     if (!interaction.isChatInputCommand()) return;
     const command = client.commands.get(interaction.commandName);
     if (!command) return;
+
     try {
         await command.execute(interaction);
     } catch (e) {
@@ -149,10 +158,5 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// LOGIN SEGURO CON MULTI-NOMBRE DE VARIABLE
 const token = process.env.DISCORD_TOKEN || process.env.TOKEN || process.env.BOT_TOKEN;
-if (!token) {
-    console.error("❌ ERROR: No hay token configurado en Railway.");
-} else {
-    client.login(token).catch(err => console.error("❌ Error de Login:", err.message));
-}
+client.login(token).catch(err => console.error("❌ Error de Login:", err.message));
