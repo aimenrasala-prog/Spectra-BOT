@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const path = require('path');
 const fs = require('fs');
 const { gestionarIA } = require('./utils/aiHandler');
@@ -24,15 +24,19 @@ const commandsPath = path.join(__dirname, 'commands');
 if (fs.existsSync(commandsPath)) {
     const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
-        const commandList = require(path.join(commandsPath, file));
-        if (Array.isArray(commandList)) {
-            commandList.forEach(cmd => {
-                client.commands.set(cmd.data.name, cmd);
-                commandsJSON.push(cmd.data.toJSON());
-            });
-        } else {
-            client.commands.set(commandList.data.name, commandList);
-            commandsJSON.push(commandList.data.toJSON());
+        try {
+            const commandList = require(path.join(commandsPath, file));
+            if (Array.isArray(commandList)) {
+                commandList.forEach(cmd => {
+                    client.commands.set(cmd.data.name, cmd);
+                    commandsJSON.push(cmd.data.toJSON());
+                });
+            } else {
+                client.commands.set(commandList.data.name, commandList);
+                commandsJSON.push(commandList.data.toJSON());
+            }
+        } catch (err) {
+            console.error(`Error cargando comando ${file}:`, err);
         }
     }
 }
@@ -56,30 +60,28 @@ client.on('guildMemberAdd', async (member) => {
     setTimeout(() => msg.delete().catch(() => {}), 15000);
 });
 
-// 5. Mensajes (IA, Moderación y Trade)
+// 5. Mensajes (IA, Moderación y Admins)
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+    if (message.author.bot || !message.guild) return;
 
-    // --- BLOQUE DE SEGURIDAD PARA ADMINS ---
-    // Si el usuario es Admin o tiene permisos de moderar mensajes, el bot NO lo toca
+    // --- PROTECCIÓN PARA ADMINS ---
     const esStaff = message.member.permissions.has('Administrator') || 
                     message.member.permissions.has('ManageMessages');
 
     if (!esStaff) {
-        // MODERACIÓN (Solo para usuarios normales)
-        const texto = message.content.toLowerCase();
+        // MODERACIÓN (Solo usuarios normales)
+        const textoNorm = message.content.toLowerCase();
         const palabras = message.content.split(' ').filter(p => p.length > 2);
         const mayusculas = palabras.filter(p => p === p.toUpperCase());
 
-        // Si usa muchas mayúsculas o insulta
-        if (mayusculas.length > 3 || INSULTOS.some(insulto => texto.includes(insulto))) {
+        if (mayusculas.length > 3 || INSULTOS.some(insulto => textoNorm.includes(insulto))) {
             if (message.deletable) await message.delete().catch(() => {});
             return message.channel.send(`⚠️ ${message.author}, modera tu lenguaje/mayúsculas.`)
                 .then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
         }
     }
 
-    // RECORDATORIO TRADE (Sigue funcionando igual)
+    // RECORDATORIO TRADE
     if (message.channel.id === process.env.ID_CANAL_GENERAL) {
         contadorMensajes++;
         if (contadorMensajes >= 7) {
@@ -92,31 +94,17 @@ client.on('messageCreate', async (message) => {
     const esPrivado = message.author.id === process.env.ID_TU_USUARIO_ID && message.channel.id === process.env.ID_CANAL_IA_PRIVADO;
     const esTicketSoporte = message.channel.parentId === process.env.ID_CAT_SOPORTE;
     const esTicketTrade = message.channel.parentId === process.env.ID_CAT_TRADE;
-
-    // Si me mencionan en cualquier canal, también respondo (como ChatGPT)
     const meMencionan = message.mentions.has(client.user);
 
     if (esPrivado || esTicketSoporte || esTicketTrade || meMencionan) {
         await message.channel.sendTyping();
-        let contextoIA = 'GENERAL';
-        
-        if (esPrivado) contextoIA = 'PRIVADO';
-        else if (esTicketTrade) contextoIA = 'TRADE_ELGRINGO';
-        else if (esTicketSoporte) {
-            const nombreCanal = message.channel.name.toLowerCase();
-            if (nombreCanal.includes('alianza')) contextoIA = 'SOPORTE_ALIANZAS';
-            else if (nombreCanal.includes('report')) contextoIA = 'SOPORTE_REPORTES';
-            else if (nombreCanal.includes('premio')) contextoIA = 'SOPORTE_PREMIOS';
-        }
-
         try {
-            // Quitamos la mención del texto para que la IA no reciba el ID del bot
-            const contenidoLimpio = message.content.replace(`<@!${client.user.id}>`, "").replace(`<@${client.user.id}>`, "");
-            const respuesta = await gestionarIA(contenidoLimpio, contextoIA);
+            const contenidoLimpio = message.content.replace(/<@!?\d+>/g, "").trim();
+            const respuesta = await gestionarIA(contenidoLimpio);
             await message.reply(respuesta);
         } catch (err) {
-            console.error("Error IA:", err);
-            await message.reply("❌ Tuve un problema al pensar. Inténtalo de nuevo.");
+            console.error("Error en IA:", err);
+            await message.reply("❌ Hubo un error al procesar tu pregunta.");
         }
     }
 });
@@ -128,9 +116,6 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.update({ content: `✅ Drop ganado por: ${interaction.user}`, embeds: [], components: [] });
             const logs = interaction.guild.channels.cache.get(process.env.ID_CANAL_LOGS);
             if (logs) logs.send(`🎁 **Drop reclamado:** ${interaction.user.tag}`);
-        }
-        if (interaction.customId.startsWith('join_')) {
-            await interaction.reply({ content: '✅ ¡Inscrito!', ephemeral: true });
         }
         return;
     }
@@ -146,4 +131,13 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// --- LOGIN SEGURO ---
+const token = process.env.DISCORD_TOKEN || process.env.TOKEN || process.env.BOT_TOKEN;
+
+if (!token) {
+    console.error("❌ ERROR: No se encontró ningún Token en las variables de Railway.");
+} else {
+    client.login(token).catch(err => {
+        console.error("❌ ERROR AL INICIAR SESIÓN:", err.message);
+    });
+}
