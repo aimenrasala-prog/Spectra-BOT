@@ -1,31 +1,29 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const axios = require('axios');
 
 async function gestionarIA(mensaje) {
     try {
-        // 1. Conexión con la llave de Railway
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-        
-        // 2. Intentamos usar el modelo más flexible
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const response = await axios.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+                model: "llama-3.3-70b-versatile", // Un modelo potente como ChatGPT
+                messages: [
+                    { role: "system", content: "Eres una IA avanzada como ChatGPT. Responde a todo lo que el usuario te pregunte de forma clara y útil." },
+                    { role: "user", content: mensaje }
+                ]
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.GROQ_KEY}`, // Asegúrate de que en Railway se llame igual
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
 
-        // 3. Le pedimos que sea como ChatGPT
-        const promptSistema = "Eres un asistente inteligente como ChatGPT. Responde a cualquier pregunta de forma detallada.";
-        const result = await model.generateContent(`${promptSistema}\n\nPregunta: ${mensaje}`);
-        
-        const response = await result.response;
-        return response.text();
+        return response.data.choices[0].message.content;
 
     } catch (error) {
-        console.error("ERROR REAL DE GOOGLE:", error.message);
-
-        // --- EL PARACAÍDAS QUE FUNCIONA ---
-        // Si el error es de permisos (el famoso 403), el bot te avisará con calma
-        if (error.message.includes("403") || error.message.includes("permission")) {
-            return "💡 **Casi listo:** Tu llave funciona, pero Google Cloud todavía está procesando el permiso. \n\n**Mientras esperas, puedes preguntarme cosas básicas como:**\n- ¿Qué es un trade?\n- ¿Cómo hago una alianza?";
-        }
-
-        // Si es otro error, te da una respuesta amable
-        return "👋 ¡Hola! Estoy terminando de configurar mi cerebro de IA. Prueba a preguntarme algo sencillo en unos minutos.";
+        console.error("Error en la IA:", error.response ? error.response.data : error.message);
+        return "❌ Hubo un error al conectar con mi cerebro. Asegúrate de que la clave de Groq esté bien puesta en Railway.";
     }
 }
 
