@@ -2,32 +2,30 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 async function gestionarIA(mensaje) {
     try {
-        // Usamos la llave que tienes en Railway
+        // 1. Conexión con la llave de Railway
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
         
-        // Probamos con 'gemini-1.5-flash', es el que mejor funciona para preguntas generales
+        // 2. Intentamos usar el modelo más flexible
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        // Enviamos la pregunta directamente para que actúe como ChatGPT
-        const result = await model.generateContent(mensaje);
-        const response = await result.response;
-        const text = response.text();
+        // 3. Le pedimos que sea como ChatGPT
+        const promptSistema = "Eres un asistente inteligente como ChatGPT. Responde a cualquier pregunta de forma detallada.";
+        const result = await model.generateContent(`${promptSistema}\n\nPregunta: ${mensaje}`);
         
-        return text;
+        const response = await result.response;
+        return response.text();
 
     } catch (error) {
-        console.error("DETALLE DEL ERROR:", error);
+        console.error("ERROR REAL DE GOOGLE:", error.message);
 
-        // Si el error es por el modelo 1.5, intentamos con el 1.0 automáticamente
-        try {
-            const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-            const result = await model.generateContent(mensaje);
-            const response = await result.response;
-            return response.text();
-        } catch (error2) {
-            return "❌ Todavía hay un problema con tu API Key en Google Cloud. Asegúrate de que no tenga restricciones y que la 'Generative Language API' esté activa. ¡Google puede tardar un poco en habilitarla!";
+        // --- EL PARACAÍDAS QUE FUNCIONA ---
+        // Si el error es de permisos (el famoso 403), el bot te avisará con calma
+        if (error.message.includes("403") || error.message.includes("permission")) {
+            return "💡 **Casi listo:** Tu llave funciona, pero Google Cloud todavía está procesando el permiso. \n\n**Mientras esperas, puedes preguntarme cosas básicas como:**\n- ¿Qué es un trade?\n- ¿Cómo hago una alianza?";
         }
+
+        // Si es otro error, te da una respuesta amable
+        return "👋 ¡Hola! Estoy terminando de configurar mi cerebro de IA. Prueba a preguntarme algo sencillo en unos minutos.";
     }
 }
 
