@@ -1,15 +1,11 @@
 require('dotenv').config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    Collection, 
-    EmbedBuilder, 
-    path, 
-    fs 
-} = require('discord.js');
+// 1. Separamos bien las librerías
+const { Client, GatewayIntentBits, Collection, EmbedBuilder } = require('discord.js');
+const path = require('path'); // Corregido: fuera de las llaves
+const fs = require('fs');     // Corregido: fuera de las llaves
 const { gestionarIA } = require('./utils/aiHandler');
 
-// 1. Configuración del Cliente
+// Configuración del Cliente
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -21,60 +17,64 @@ const client = new Client({
 
 client.commands = new Collection();
 let contadorMensajes = 0;
-const INSULTOS = ['pendejo', 'estupido', 'idiota']; // Puedes añadir más palabras aquí
+const INSULTOS = ['pendejo', 'estupido', 'idiota']; 
 
-// 2. Cargar Comandos Slash
+// 2. Cargar Comandos Slash (Sistema robusto)
 const commandsJSON = [];
-const commandsPath = require('path').join(__dirname, 'commands');
-if (require('fs').existsSync(commandsPath)) {
-    const commandFiles = require('fs').readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+const commandsPath = path.join(__dirname, 'commands');
+
+if (fs.existsSync(commandsPath)) {
+    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
-        const commandList = require(require('path').join(commandsPath, file));
-        commandList.forEach(cmd => {
-            client.commands.set(cmd.data.name, cmd);
-            commandsJSON.push(cmd.data.toJSON());
-        });
+        const commandList = require(path.join(commandsPath, file));
+        // Verificamos si es un array de comandos o uno solo
+        if (Array.isArray(commandList)) {
+            commandList.forEach(cmd => {
+                client.commands.set(cmd.data.name, cmd);
+                commandsJSON.push(cmd.data.toJSON());
+            });
+        } else {
+            client.commands.set(commandList.data.name, commandList);
+            commandsJSON.push(commandList.data.toJSON());
+        }
     }
 }
 
-// 3. Evento: Bot Listo y Registro de Comandos
+// 3. Evento: Bot Listo
 client.once('ready', async () => {
     console.log(`✅ ¡Bot online como ${client.user.tag}!`);
-    await client.application.commands.set(commandsJSON);
-    console.log("🚀 Comandos Slash registrados correctamente.");
+    try {
+        await client.application.commands.set(commandsJSON);
+        console.log("🚀 Comandos Slash registrados.");
+    } catch (error) {
+        console.error("Error registrando comandos:", error);
+    }
 });
 
-// 4. Evento: Bienvenidas (15 segundos)
+// 4. Bienvenidas (15 seg)
 client.on('guildMemberAdd', async (member) => {
     const canalGeneral = member.guild.channels.cache.get(process.env.ID_CANAL_GENERAL);
     if (!canalGeneral) return;
-
-    try {
-        const msg = await canalGeneral.send(`👋 ¡Bienvenido ${member}! Disfruta del servidor.`);
-        setTimeout(() => {
-            msg.delete().catch(() => {});
-        }, 15000);
-    } catch (error) {
-        console.error("Error en bienvenida:", error);
-    }
+    const msg = await canalGeneral.send(`👋 ¡Bienvenido ${member}! Disfruta del servidor.`);
+    setTimeout(() => msg.delete().catch(() => {}), 15000);
 });
 
-// 5. Evento: Mensajes (IA, Moderación y Trade)
+// 5. Mensajes (IA, Moderación y Trade)
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // --- MODERACIÓN ---
+    // MODERACIÓN
     const texto = message.content.toLowerCase();
-    const palabras = message.content.split(' ').filter(p => p.length > 1);
-    const mayusculas = palabras.filter(p => p === p.toUpperCase() && p.length > 2);
+    const palabras = message.content.split(' ').filter(p => p.length > 2);
+    const mayusculas = palabras.filter(p => p === p.toUpperCase());
 
     if (mayusculas.length > 3 || INSULTOS.some(insulto => texto.includes(insulto))) {
-        await message.delete().catch(() => {});
-        return message.channel.send(`⚠️ ${message.author}, modera tu lenguaje o el uso de mayúsculas.`)
-            .then(m => setTimeout(() => m.delete(), 5000));
+        if (message.deletable) await message.delete().catch(() => {});
+        return message.channel.send(`⚠️ ${message.author}, modera tu lenguaje/mayúsculas.`)
+            .then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
     }
 
-    // --- RECORDATORIO DE TRADE (Cada 7 mensajes en General) ---
+    // RECORDATORIO TRADE
     if (message.channel.id === process.env.ID_CANAL_GENERAL) {
         contadorMensajes++;
         if (contadorMensajes >= 7) {
@@ -83,15 +83,15 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- RESPUESTA DE LA IA ---
+    // RESPUESTA DE LA IA
     const esPrivado = message.author.id === process.env.ID_TU_USUARIO_ID && message.channel.id === process.env.ID_CANAL_IA_PRIVADO;
     const esTicketSoporte = message.channel.parentId === process.env.ID_CAT_SOPORTE;
     const esTicketTrade = message.channel.parentId === process.env.ID_CAT_TRADE;
 
     if (esPrivado || esTicketSoporte || esTicketTrade) {
         await message.channel.sendTyping();
-
         let contextoIA = 'GENERAL';
+        
         if (esPrivado) contextoIA = 'PRIVADO';
         else if (esTicketTrade) contextoIA = 'TRADE_ELGRINGO';
         else {
@@ -106,36 +106,33 @@ client.on('messageCreate', async (message) => {
             await message.reply(respuesta);
         } catch (err) {
             console.error("Error Gemini:", err);
-            await message.reply("❌ Hubo un error procesando tu solicitud con la IA.");
+            await message.reply("❌ Hubo un error con Gemini. Revisa los logs de Railway.");
         }
     }
 });
 
-// 6. Evento: Interacciones (Comandos Slash y Botones)
+// 6. Interacciones
 client.on('interactionCreate', async (interaction) => {
-    // Manejo de Botones (Drops y Sorteos)
     if (interaction.isButton()) {
         if (interaction.customId === 'claim_drop') {
             await interaction.update({ content: `✅ Drop ganado por: ${interaction.user}`, embeds: [], components: [] });
             const logs = interaction.guild.channels.cache.get(process.env.ID_CANAL_LOGS);
-            if (logs) logs.send(`🎁 **Drop reclamado:** ${interaction.user.tag} ganó un item.`);
+            if (logs) logs.send(`🎁 **Drop reclamado:** ${interaction.user.tag}`);
         }
         if (interaction.customId.startsWith('join_')) {
-            await interaction.reply({ content: '✅ ¡Has entrado en el sorteo! El Staff revisará los ganadores.', ephemeral: true });
+            await interaction.reply({ content: '✅ ¡Inscrito!', ephemeral: true });
         }
         return;
     }
 
-    // Manejo de Comandos Slash
     if (!interaction.isChatInputCommand()) return;
     const command = client.commands.get(interaction.commandName);
     if (!command) return;
-
     try {
         await command.execute(interaction);
-    } catch (error) {
-        console.error(error);
-        await interaction.reply({ content: 'Hubo un error al ejecutar el comando.', ephemeral: true });
+    } catch (e) {
+        console.error(e);
+        await interaction.reply({ content: 'Error al ejecutar comando.', ephemeral: true });
     }
 });
 
