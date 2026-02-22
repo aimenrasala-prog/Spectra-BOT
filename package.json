@@ -1,1 +1,14 @@
-
+{
+  "name": "bot-discord-ia",
+  "version": "1.0.0",
+  "description": "Bot con IA Gemini y Gestión de Servidor",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "@google/generative-ai": "^0.2.1",
+    "dotenv": "^16.4.1"
+  }
+}
